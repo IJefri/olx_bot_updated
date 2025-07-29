@@ -38,7 +38,7 @@ COPY . /app
 
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Вказуємо використовувати chromium з apt, для selenium
+# Вказуємо шлях до chromium та драйвера для selenium
 ENV CHROME_BIN=/usr/bin/chromium
 ENV CHROME_DRIVER=/usr/bin/chromedriver
 
