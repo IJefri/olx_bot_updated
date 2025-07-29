@@ -12,26 +12,26 @@ from io import BytesIO
 from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.chrome.options import Options
-from selenium.common.exceptions import NoSuchElementException, TimeoutException
+from selenium.common.exceptions import NoSuchElementException
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 
 import telebot
 
-# Настройка логирования
+# Настройка логування
 logging.basicConfig(
-    level=logging.DEBUG,  # Больше логов — DEBUG уровень
+    level=logging.INFO,
     format='%(asctime)s [%(levelname)s] %(message)s',
     handlers=[logging.StreamHandler()]
 )
 logger = logging.getLogger(__name__)
 
-# Получаем токен и чат из переменных окружения
+# Отримуємо токен і чат із змінних середовища
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 CHAT_ID = int(os.getenv("CHAT_ID"))
 bot = telebot.TeleBot(BOT_TOKEN)
 
-# Подключение к PostgreSQL
+# Підключення до PostgreSQL
 DATABASE_URL = os.getenv("DATABASE_URL")
 try:
     conn = psycopg2.connect(DATABASE_URL)
@@ -42,7 +42,7 @@ except Exception as e:
     logger.error(f"Error connecting to database: {e}")
     raise e
 
-# Создание таблицы, если не существует
+# Створення таблиці, якщо не існує
 cursor.execute("""
 CREATE TABLE IF NOT EXISTS listings (
     id TEXT PRIMARY KEY,
@@ -58,10 +58,9 @@ CREATE TABLE IF NOT EXISTS listings (
 """)
 logger.info("Ensured listings table exists.")
 
-# Установка локали для парсинга дат
+# Встановлення локалі для парсингу дат
 try:
     locale.setlocale(locale.LC_TIME, 'en_US.UTF-8')
-    logger.debug("Locale set to en_US.UTF-8")
 except locale.Error:
     logger.warning("Locale en_US.UTF-8 not supported, skipping locale setting.")
 
@@ -76,7 +75,7 @@ def is_new_listing(listing_id):
             return True
         else:
             cursor.execute("UPDATE listings SET last_seen_dt = %s WHERE id = %s", (now, listing_id))
-            logger.debug(f"Listing updated last_seen_dt: {listing_id}")
+            logger.info(f"Listing updated last_seen_dt: {listing_id}")
             return False
     except Exception as e:
         logger.error(f"Database error in is_new_listing for {listing_id}: {e}")
@@ -130,13 +129,9 @@ def parse_ukr_date(date_str):
         month = MONTHS.get(parts[1].lower())
         year = parts[2]
         if month:
-            try:
-                result = datetime.strptime(f"{day}.{month}.{year}", "%d.%m.%Y").isoformat()
-                logger.debug(f"Parsed date: {result}")
-                return result
-            except Exception as e:
-                logger.error(f"Error parsing date {date_str}: {e}")
-                return None
+            result = datetime.strptime(f"{day}.{month}.{year}", "%d.%m.%Y").isoformat()
+            logger.debug(f"Parsed date: {result}")
+            return result
     logger.warning(f"Could not parse date: {date_str}")
     return None
 
@@ -147,7 +142,6 @@ def parse_card(card, cursor):
             logger.warning("Card without id skipped")
             return
         if not is_new_listing(listing_id):
-            logger.debug(f"Listing {listing_id} already seen, skipping insert.")
             return
 
         title = card.find_element(By.CSS_SELECTOR, "a.css-1tqlkj0 h4").text
@@ -187,22 +181,21 @@ def parse_card(card, cursor):
             created_at_dt
         ))
         logger.info(f"Processed listing: {listing_id} - {title}")
-    except NoSuchElementException as e:
-        logger.warning(f"NoSuchElementException in parse_card: {e}")
+    except NoSuchElementException:
+        logger.warning("NoSuchElementException in parse_card")
     except Exception as e:
         logger.error(f"Error parsing card: {e}")
 
 def send_message(name, district, price, description, link, first_img_url=None):
     message = (
-        f"🏠 *{name}*\n"
-        f"📍 *Район*: {district}\n\n"
-        f"💰 *Ціна*: {price}\n"
-        f"📝 *Опис*: {description[:500]}\n"
-        f"🔗 *Посилання*: {link}"
+        f"🏠 **{name}**\n"
+        f"📍 **Район**: {district}\n\n"
+        f"💰 **Ціна**: {price}\n"
+        f"📝 **Опис**: {description[:500]}\n"
+        f"🔗 **Посилання**: {link}"
     )
     try:
         if first_img_url:
-            logger.debug(f"Fetching image from {first_img_url}")
             response = requests.get(first_img_url, timeout=10)
             response.raise_for_status()
             bio = BytesIO(response.content)
@@ -217,7 +210,8 @@ def send_message(name, district, price, description, link, first_img_url=None):
     except Exception as e:
         logger.error(f"Error sending Telegram message: {e}")
 
-def update_missing_descriptions_and_images(cursor, conn, driver):
+def update_missing_descriptions_and_images(cursor, conn):
+    global driver
     logger.info("Starting update of missing descriptions and images.")
     cursor.execute("""
     SELECT id, name, district, price
@@ -249,7 +243,6 @@ def update_missing_descriptions_and_images(cursor, conn, driver):
             logger.debug(f"Updating listing {listing_id}: opening {link}")
             driver.get(link)
 
-            # Проверяем, доступно ли объявление
             try:
                 inactive_div = driver.find_element(By.CSS_SELECTOR, 'div[data-testid="ad-inactive-msg"]')
                 if "Це оголошення більше не доступне" in inactive_div.text:
@@ -285,16 +278,12 @@ def update_missing_descriptions_and_images(cursor, conn, driver):
 
             send_message(name, district, price, description_text, link, first_img_url)
 
-            # Перезапуск драйвера после каждых 10 обработанных объявлений (для контроля памяти)
             if idx > 0 and idx % 10 == 0:
                 logger.info("Restarting webdriver to avoid memory leaks (after 10 updates).")
                 driver.quit()
                 time.sleep(2)
-                global driver
                 driver = webdriver.Chrome(options=chrome_options)
 
-        except TimeoutException:
-            logger.error(f"Timeout loading description for listing {listing_id}")
         except Exception as e:
             logger.error(f"Error updating listing {listing_id}: {e}")
             time.sleep(3)
@@ -310,7 +299,7 @@ def get_links(pages=None):
         PARAMS["page"] = page_num
         url = build_url(PARAMS)
         try:
-            logger.debug(f"Loading page {page_num}: {url}")
+            logger.info(f"Fetching page {page_num} with URL: {url}")
             driver.get(url)
             wait = WebDriverWait(driver, 10)
             wait.until(EC.presence_of_all_elements_located((By.CSS_SELECTOR, "div[data-cy='l-card']")))
@@ -320,19 +309,15 @@ def get_links(pages=None):
                 logger.info(f"No cards found on page {page_num}, stopping.")
                 break
 
-            logger.debug(f"Found {len(cards)} cards on page {page_num}")
-
             for card in cards:
                 parse_card(card, cursor)
 
             logger.info(f"Processed page {page_num} with {len(cards)} cards.")
 
-            # Перезапуск драйвера каждые 5 страниц для контроля памяти
-            if page_num % 5 == 0:
-                logger.info("Restarting webdriver to avoid memory leaks (after 5 pages).")
-                driver.quit()
-                time.sleep(2)
-                driver = webdriver.Chrome(options=chrome_options)
+            # Перезапуск драйвера після кожної сторінки, щоб уникнути витоків пам'яті
+            driver.quit()
+            time.sleep(2)
+            driver = webdriver.Chrome(options=chrome_options)
 
             page_num += 1
         except Exception as e:
@@ -340,19 +325,17 @@ def get_links(pages=None):
             break
 
 if __name__ == "__main__":
-    logger.info("Starting main script execution.")
     driver = webdriver.Chrome(options=chrome_options)
     logger.info("Initialized headless Chrome driver.")
     try:
-        get_links(3)  # Можно менять количество страниц
-        # Чтобы обновить описания и отправить в телеграм, раскомментируй ниже:
-        update_missing_descriptions_and_images(cursor, conn, driver)
+        get_links(3)
+        # Оновити опис та відправити в телеграм (розкоментувати при потребі)
+        update_missing_descriptions_and_images(cursor, conn)
         logger.info("Script finished successfully.")
     except Exception as e:
         logger.error(f"Fatal error in main execution: {e}")
     finally:
-        logger.info("Cleaning up resources.")
         driver.quit()
         cursor.close()
         conn.close()
-        logger.info("Cleaned up resources and exiting.")
+        logger.info("Cleaned up resources.")
