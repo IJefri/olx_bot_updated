@@ -1,4 +1,5 @@
+selenium
+telebot
 requests
 Pillow
-selenium
-pyTelegramBotAPI
+psycopg2-binary
