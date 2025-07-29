@@ -14,7 +14,6 @@ import gc
 from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.chrome.options import Options
-from selenium.common.exceptions import NoSuchElementException
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 
@@ -80,9 +79,9 @@ def is_new_listing(listing_id):
 chrome_options = Options()
 chrome_options.add_argument("--no-sandbox")
 chrome_options.add_argument("--disable-dev-shm-usage")
-chrome_options.add_argument("--headless")
+chrome_options.add_argument("--headless=new")  # новий headless режим в Chrome 112+
 chrome_options.add_argument("--disable-gpu")
-chrome_options.add_argument("--window-size=1920,1080")
+chrome_options.add_argument("--window-size=1024,768")  # зменшене вікно для економії пам'яті
 
 BASE_URL = "https://www.olx.ua/uk/nedvizhimost/kvartiry/dolgosrochnaya-arenda-kvartir/kiev/"
 PARAMS = {
@@ -103,7 +102,6 @@ def parse_card(card):
         if not listing_id or not is_new_listing(listing_id):
             return
         title = card.find_element(By.CSS_SELECTOR, "a.css-1tqlkj0 h4").text
-        link = card.find_element(By.CSS_SELECTOR, "a.css-1tqlkj0").get_attribute('href')
         price = card.find_element(By.CSS_SELECTOR, '[data-testid="ad-price"]').text
         district = card.find_element(By.CSS_SELECTOR, '[data-testid="location-date"]').text
         img_url = card.find_element(By.CSS_SELECTOR, 'img.css-8wsg1m').get_attribute('src')
@@ -135,9 +133,19 @@ def get_links(pages):
             cards = wait.until(EC.presence_of_all_elements_located((By.CSS_SELECTOR, "div[data-cy='l-card']")))
             for card in cards:
                 parse_card(card)
+                del card
             logger.info(f"Page {page_num} processed ({len(cards)} cards).")
-            log_memory(f"After page {page_num}")
+            
+            # Очищуємо кеш і куки браузера для зменшення пам’яті
+            try:
+                driver.execute_cdp_cmd("Network.clearBrowserCache", {})
+                driver.execute_cdp_cmd("Network.clearBrowserCookies", {})
+            except Exception as e:
+                logger.warning(f"Failed to clear cache/cookies: {e}")
+
             gc.collect()
+            log_memory(f"After page {page_num}")
+            time.sleep(1)  # Невелика пауза для стабільності
     finally:
         driver.quit()
         log_memory("Driver quit")
