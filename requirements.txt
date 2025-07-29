@@ -3,3 +3,4 @@ telebot
 requests
 Pillow
 psycopg2-binary
+psutil
