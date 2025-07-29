@@ -1,10 +1,17 @@
 services:
   - type: cron
-    name: olx-bot
-    env: python
-    plan: free
+    name: olx_bot
     schedule: "*/5 * * * *"
-    disk:
-      name: data
-      mountPath: /data
-      sizeGB: 1
+    env: python
+    env_vars:
+      - key: BOT_TOKEN
+        from_secret: BOT_TOKEN
+      - key: CHAT_ID
+        from_secret: CHAT_ID
+      - key: DATABASE_URL
+        from_secret: DATABASE_URL
+    branch: main
+    region: frankfurt
+    dockerfilePath: ./Dockerfile
+    autoDeploy: true
+    instanceType: starter
