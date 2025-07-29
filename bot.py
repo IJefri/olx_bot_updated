@@ -8,41 +8,29 @@ import logging
 import re
 import requests
 from io import BytesIO
-
 from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.chrome.options import Options
-from selenium.common.exceptions import NoSuchElementException, WebDriverException
+from selenium.common.exceptions import NoSuchElementException
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
-
 import telebot
+import gc
 
 # Логування
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s [%(levelname)s] %(message)s',
-    handlers=[logging.StreamHandler()]
-)
+logging.basicConfig(level=logging.INFO, format='%(asctime)s [%(levelname)s] %(message)s')
 logger = logging.getLogger(__name__)
 
-# Телеграм-бот
+# Токен і чат
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 CHAT_ID = int(os.getenv("CHAT_ID"))
 bot = telebot.TeleBot(BOT_TOKEN)
 
-# Підключення до бази
+# Підключення до PostgreSQL
 DATABASE_URL = os.getenv("DATABASE_URL")
-try:
-    conn = psycopg2.connect(DATABASE_URL)
-    conn.autocommit = True
-    cursor = conn.cursor()
-    logger.info("Connected to PostgreSQL database.")
-except Exception as e:
-    logger.error(f"Error connecting to database: {e}")
-    raise e
-
-# Створення таблиці
+conn = psycopg2.connect(DATABASE_URL)
+conn.autocommit = True
+cursor = conn.cursor()
 cursor.execute("""
 CREATE TABLE IF NOT EXISTS listings (
     id TEXT PRIMARY KEY,
@@ -56,45 +44,20 @@ CREATE TABLE IF NOT EXISTS listings (
     created_at_dt TIMESTAMPTZ
 );
 """)
-logger.info("Ensured listings table exists.")
 
-# Локаль (для парсингу дат)
+# Локаль для дат
 try:
     locale.setlocale(locale.LC_TIME, 'en_US.UTF-8')
 except locale.Error:
-    logger.warning("Locale en_US.UTF-8 not supported, skipping locale setting.")
+    pass
 
-def is_new_listing(listing_id):
-    try:
-        cursor.execute("SELECT last_seen_dt FROM listings WHERE id = %s", (listing_id,))
-        row = cursor.fetchone()
-        now = datetime.now(timezone.utc)
-        if row is None:
-            cursor.execute("INSERT INTO listings (id, last_seen_dt) VALUES (%s, %s)", (listing_id, now))
-            logger.info(f"New listing added: {listing_id}")
-            return True
-        else:
-            cursor.execute("UPDATE listings SET last_seen_dt = %s WHERE id = %s", (now, listing_id))
-            logger.info(f"Listing updated last_seen_dt: {listing_id}")
-            return False
-    except Exception as e:
-        logger.error(f"Database error in is_new_listing for {listing_id}: {e}")
-        return False
-
+# Selenium options
 chrome_options = Options()
 chrome_options.add_argument("--no-sandbox")
 chrome_options.add_argument("--disable-dev-shm-usage")
 chrome_options.add_argument("--headless")
 chrome_options.add_argument("--disable-gpu")
 chrome_options.add_argument("--window-size=1920,1080")
-chrome_options.add_argument("--single-process")
-chrome_options.add_argument("--remote-debugging-port=9222")
-# Додаткові опції для стабільності
-chrome_options.add_argument("--disable-extensions")
-chrome_options.add_argument("--disable-background-networking")
-chrome_options.add_argument("--disable-sync")
-chrome_options.add_argument("--disable-translate")
-chrome_options.add_argument("--disable-features=VizDisplayCompositor")
 
 BASE_URL = "https://www.olx.ua/uk/nedvizhimost/kvartiry/dolgosrochnaya-arenda-kvartir/kiev/"
 PARAMS = {
@@ -107,9 +70,7 @@ PARAMS = {
 }
 
 def build_url(params):
-    url = BASE_URL + "?" + urlencode(params)
-    logger.debug(f"Built URL: {url}")
-    return url
+    return BASE_URL + "?" + urlencode(params)
 
 def parse_ukr_date(date_str):
     MONTHS = {
@@ -121,49 +82,43 @@ def parse_ukr_date(date_str):
         "ноября": "11", "декабря": "12",
     }
     date_str = date_str.replace("р.", "").strip()
-
     if date_str.startswith("Сьогодні") or date_str.startswith("Сегодня"):
-        time_match = re.search(r'о\s*(\d{1,2}:\d{2})', date_str)
-        time_part = time_match.group(1) if time_match else "00:00"
-        result = datetime.now().strftime(f"%Y-%m-%d {time_part}:00")
-        logger.debug(f"Parsed date (today): {result}")
-        return result
-
+        return datetime.now().isoformat()
     parts = date_str.split()
     if len(parts) >= 3:
-        day = parts[0]
-        month = MONTHS.get(parts[1].lower())
-        year = parts[2]
+        day, month_name, year = parts[:3]
+        month = MONTHS.get(month_name.lower())
         if month:
-            result = datetime.strptime(f"{day}.{month}.{year}", "%d.%m.%Y").isoformat()
-            logger.debug(f"Parsed date: {result}")
-            return result
-    logger.warning(f"Could not parse date: {date_str}")
+            return datetime.strptime(f"{day}.{month}.{year}", "%d.%m.%Y").isoformat()
     return None
+
+def is_new_listing(listing_id):
+    cursor.execute("SELECT last_seen_dt FROM listings WHERE id = %s", (listing_id,))
+    row = cursor.fetchone()
+    now = datetime.now(timezone.utc)
+    if row is None:
+        cursor.execute("INSERT INTO listings (id, last_seen_dt) VALUES (%s, %s)", (listing_id, now))
+        logger.info(f"New listing added: {listing_id}")
+        return True
+    else:
+        cursor.execute("UPDATE listings SET last_seen_dt = %s WHERE id = %s", (now, listing_id))
+        return False
 
 def parse_card(card):
     try:
         listing_id = card.get_attribute('id')
-        if not listing_id:
-            logger.warning("Card without id skipped")
+        if not listing_id or not is_new_listing(listing_id):
             return
-        if not is_new_listing(listing_id):
-            return
-
         title = card.find_element(By.CSS_SELECTOR, "a.css-1tqlkj0 h4").text
         link = card.find_element(By.CSS_SELECTOR, "a.css-1tqlkj0").get_attribute('href')
         price = card.find_element(By.CSS_SELECTOR, '[data-testid="ad-price"]').text
         district = card.find_element(By.CSS_SELECTOR, '[data-testid="location-date"]').text
         img_url = card.find_element(By.CSS_SELECTOR, 'img.css-8wsg1m').get_attribute('src')
-
+        created_at_dt = None
         if ' - ' in district:
             _, date_str = district.split(' - ', 1)
             created_at_dt = parse_ukr_date(date_str)
-        else:
-            created_at_dt = None
-        
         now = datetime.now(timezone.utc)
-
         cursor.execute("""
             INSERT INTO listings (id, name, price, district, img_url, description, last_seen_dt, upload_dt, created_at_dt)
             VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
@@ -175,176 +130,77 @@ def parse_card(card):
                 img_url = EXCLUDED.img_url,
                 upload_dt = EXCLUDED.upload_dt,
                 created_at_dt = EXCLUDED.created_at_dt
-        """, (
-            listing_id,
-            title,
-            price,
-            district,
-            img_url,
-            None,
-            now,
-            now,
-            created_at_dt
-        ))
+        """, (listing_id, title, price, district, img_url, None, now, now, created_at_dt))
         logger.info(f"Processed listing: {listing_id} - {title}")
-    except NoSuchElementException:
-        logger.warning("NoSuchElementException in parse_card")
     except Exception as e:
         logger.error(f"Error parsing card: {e}")
 
 def send_message(name, district, price, description, link, first_img_url=None):
-    message = (
-        f"🏠 **{name}**\n"
-        f"📍 **Район**: {district}\n\n"
-        f"💰 **Ціна**: {price}\n"
-        f"📝 **Опис**: {description[:500]}\n"
-        f"🔗 **Посилання**: {link}"
-    )
+    msg = f"🏠 **{name}**\n📍 **Район**: {district}\n\n💰 **Ціна**: {price}\n📝 **Опис**: {description[:500]}\n🔗 **Посилання**: {link}"
     try:
         if first_img_url:
-            response = requests.get(first_img_url, timeout=10)
-            response.raise_for_status()
-            bio = BytesIO(response.content)
+            r = requests.get(first_img_url, timeout=10)
+            bio = BytesIO(r.content)
             bio.name = 'image.jpg'
-            bio.seek(0)
-            bot.send_photo(CHAT_ID, photo=bio, caption=message, parse_mode='Markdown')
+            bot.send_photo(CHAT_ID, photo=bio, caption=msg, parse_mode='Markdown')
             bio.close()
-            response.close()
         else:
-            bot.send_message(CHAT_ID, message, parse_mode='Markdown')
-        logger.info(f"Sent Telegram message for listing: {name}")
+            bot.send_message(CHAT_ID, msg, parse_mode='Markdown')
+        logger.info(f"Sent Telegram message for {name}")
     except Exception as e:
         logger.error(f"Error sending Telegram message: {e}")
 
-def update_missing_descriptions_and_images():
-    global driver
-    logger.info("Starting update of missing descriptions and images.")
+def update_missing_descriptions_and_images(driver):
     cursor.execute("""
     SELECT id, name, district, price
-    FROM listings 
-    WHERE (description IS NULL OR description = '') 
+    FROM listings
+    WHERE (description IS NULL OR description = '')
       AND upload_dt >= NOW() - INTERVAL '30 minutes'
       AND created_at_dt >= NOW() - INTERVAL '2 days'
-      AND (
-        district LIKE '%Оболонський%' OR
-        district LIKE '%Подільський%' OR
-        district LIKE '%Шевченківський%' OR
-        district LIKE '%Печерський%' OR
-        district LIKE '%Солом''янський%' OR
-        district LIKE '%Голосіївський%' OR
-        district LIKE '%Оболонский%' OR
-        district LIKE '%Подольский%' OR
-        district LIKE '%Шевченковский%' OR
-        district LIKE '%Печерский%' OR
-        district LIKE '%Соломенский%' OR
-        district LIKE '%Голосеевский%'
-      )
     """)
     rows = cursor.fetchall()
     logger.info(f"Found {len(rows)} listings missing description/images to update.")
-
-    for idx, (listing_id, name, district, price) in enumerate(rows):
+    for listing_id, name, district, price in rows:
         try:
             link = f"https://www.olx.ua/{listing_id}"
-            logger.info(f"Opening listing page {listing_id}: {link}")
-            try:
-                driver.get(link)
-            except WebDriverException as e:
-                logger.error(f"WebDriverException on listing {listing_id}: {e}")
-                continue
-
-            try:
-                inactive_div = driver.find_element(By.CSS_SELECTOR, 'div[data-testid="ad-inactive-msg"]')
-                if "Це оголошення більше не доступне" in inactive_div.text:
-                    logger.info(f"Listing {listing_id} is inactive, marking as NOT AVAILABLE.")
-                    cursor.execute(
-                        "UPDATE listings SET description = 'NOT AVAILABLE', img_url = NULL WHERE id = %s",
-                        (listing_id,)
-                    )
-                    conn.commit()
-                    continue
-            except NoSuchElementException:
-                pass
-
-            wait = WebDriverWait(driver, 20)
-            desc_elem = wait.until(
-                EC.presence_of_element_located((By.CSS_SELECTOR, "div.css-19duwlz"))
-            )
+            driver.get(link)
+            wait = WebDriverWait(driver, 15)
+            desc_elem = wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, "div.css-19duwlz")))
             description_html = desc_elem.get_attribute("innerHTML").strip()
             description_text = re.sub(r'<[^>]+>', '', description_html)
-            description_text = ' '.join(description_text.split())
-
-            img_elements = driver.find_elements(By.CSS_SELECTOR, "div.swiper-slide img")
-            img_urls = list({img.get_attribute("src") for img in img_elements})
-
+            imgs = driver.find_elements(By.CSS_SELECTOR, "div.swiper-slide img")
+            img_urls = list({img.get_attribute("src") for img in imgs})
             first_img_url = img_urls[0] if img_urls else None
-
-            cursor.execute(
-                "UPDATE listings SET description = %s, img_url = %s WHERE id = %s",
-                (description_text, first_img_url, listing_id)
-            )
-            conn.commit()
-            logger.info(f"Updated listing {listing_id} with description and image.")
-
+            cursor.execute("UPDATE listings SET description = %s, img_url = %s WHERE id = %s",
+                           (description_text, first_img_url, listing_id))
             send_message(name, district, price, description_text, link, first_img_url)
-
-            # Перезапускаємо драйвер кожні 5 оновлень для уникнення утікання пам’яті
-            if idx > 0 and idx % 5 == 0:
-                logger.info("Restarting webdriver to avoid memory leaks (after 5 updates).")
-                driver.quit()
-                time.sleep(2)
-                driver = webdriver.Chrome(options=chrome_options)
-
         except Exception as e:
             logger.error(f"Error updating listing {listing_id}: {e}")
-            time.sleep(3)
+            time.sleep(2)
 
-def get_links(pages=None):
-    global driver
-    page_num = 1
-    logger.info("Starting to scrape listing pages.")
-    while True:
-        if pages is not None and page_num > pages:
-            logger.info("Reached max pages limit.")
-            break
-        PARAMS["page"] = page_num
+def get_links(pages=3):
+    driver = webdriver.Chrome(options=chrome_options)
+    for page in range(1, pages + 1):
+        PARAMS["page"] = page
         url = build_url(PARAMS)
         try:
             driver.get(url)
-            wait = WebDriverWait(driver, 10)
+            wait = WebDriverWait(driver, 15)
             wait.until(EC.presence_of_all_elements_located((By.CSS_SELECTOR, "div[data-cy='l-card']")))
-
             cards = driver.find_elements(By.CSS_SELECTOR, "div[data-cy='l-card']")
-            if not cards:
-                logger.info(f"No cards found on page {page_num}, stopping.")
-                break
-
             for card in cards:
                 parse_card(card)
-
-            logger.info(f"Processed page {page_num} with {len(cards)} cards.")
-
-            # Перезапускаємо драйвер після кожної сторінки для уникнення утікання пам’яті
-            driver.quit()
-            time.sleep(2)
-            driver = webdriver.Chrome(options=chrome_options)
-
-            page_num += 1
+            logger.info(f"Processed page {page} with {len(cards)} cards.")
         except Exception as e:
-            logger.error(f"Error fetching/parsing page {page_num}: {e}")
+            logger.error(f"Error fetching page {page}: {e}")
             break
+    driver.quit()
+    gc.collect()
 
 if __name__ == "__main__":
+    get_links(3)
     driver = webdriver.Chrome(options=chrome_options)
-    logger.info("Initialized headless Chrome driver.")
-    try:
-        get_links(3)
-        update_missing_descriptions_and_images()
-        logger.info("Script finished successfully.")
-    except Exception as e:
-        logger.error(f"Fatal error in main execution: {e}")
-    finally:
-        driver.quit()
-        cursor.close()
-        conn.close()
-        logger.info("Cleaned up resources.")
+    update_missing_descriptions_and_images(driver)
+    driver.quit()
+    cursor.close()
+    conn.close()
