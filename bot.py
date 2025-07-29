@@ -90,17 +90,6 @@ chrome_options.add_argument("--window-size=1920,1080")
 chrome_options.add_argument("--single-process")
 chrome_options.add_argument("--remote-debugging-port=9222")
 
-# Отключаем загрузку изображений, стилей и шрифтов для экономии памяти
-prefs = {
-    "profile.managed_default_content_settings.images": 2,
-    "profile.managed_default_content_settings.stylesheets": 2,
-    "profile.managed_default_content_settings.fonts": 2,
-}
-chrome_options.add_experimental_option("prefs", prefs)
-
-driver = webdriver.Chrome(options=chrome_options)
-logger.info("Initialized headless Chrome driver.")
-
 BASE_URL = "https://www.olx.ua/uk/nedvizhimost/kvartiry/dolgosrochnaya-arenda-kvartir/kiev/"
 PARAMS = {
     "currency": "UAH",
@@ -146,7 +135,7 @@ def parse_ukr_date(date_str):
     logger.warning(f"Could not parse date: {date_str}")
     return None
 
-def parse_card(card):
+def parse_card(card, cursor):
     try:
         listing_id = card.get_attribute('id')
         if not listing_id:
@@ -197,41 +186,6 @@ def parse_card(card):
     except Exception as e:
         logger.error(f"Error parsing card: {e}")
 
-def get_links(pages=None):
-    page_num = 1
-    logger.info("Starting to scrape listing pages.")
-    global driver
-    while True:
-        if pages is not None and page_num > pages:
-            logger.info("Reached max pages limit.")
-            break
-        PARAMS["page"] = page_num
-        url = build_url(PARAMS)
-        try:
-            driver.get(url)
-            
-            wait = WebDriverWait(driver, 10)
-            wait.until(EC.presence_of_all_elements_located((By.CSS_SELECTOR, "div[data-cy='l-card']")))
-            
-            cards = driver.find_elements(By.CSS_SELECTOR, "div[data-cy='l-card']")
-            if not cards:
-                logger.info(f"No cards found on page {page_num}, stopping.")
-                break
-            for card in cards:
-                parse_card(card)
-            logger.info(f"Processed page {page_num} with {len(cards)} cards.")
-            
-            if page_num % 5 == 0:
-                driver.quit()
-                time.sleep(3)
-                driver = webdriver.Chrome(options=chrome_options)
-                logger.info("Restarted Chrome driver to free memory.")
-
-            page_num += 1
-        except Exception as e:
-            logger.error(f"Error fetching/parsing page {page_num}: {e}")
-            break
-
 def send_message(name, district, price, description, link, first_img_url=None):
     message = (
         f"🏠 **{name}**\n"
@@ -256,7 +210,7 @@ def send_message(name, district, price, description, link, first_img_url=None):
     except Exception as e:
         logger.error(f"Error sending Telegram message: {e}")
 
-def update_missing_descriptions_and_images():
+def update_missing_descriptions_and_images(cursor, conn, driver):
     cursor.execute("""
     SELECT id, name, district, price
     FROM listings 
@@ -322,10 +276,48 @@ def update_missing_descriptions_and_images():
             logger.error(f"Error updating listing {listing_id}: {e}")
             time.sleep(3)
 
+def get_links(pages=None):
+    page_num = 1
+    logger.info("Starting to scrape listing pages.")
+    global driver
+    while True:
+        if pages is not None and page_num > pages:
+            logger.info("Reached max pages limit.")
+            break
+        PARAMS["page"] = page_num
+        url = build_url(PARAMS)
+        try:
+            driver.get(url)
+            wait = WebDriverWait(driver, 10)
+            wait.until(EC.presence_of_all_elements_located((By.CSS_SELECTOR, "div[data-cy='l-card']")))
+
+            cards = driver.find_elements(By.CSS_SELECTOR, "div[data-cy='l-card']")
+            if not cards:
+                logger.info(f"No cards found on page {page_num}, stopping.")
+                break
+
+            for card in cards:
+                parse_card(card, cursor)
+
+            logger.info(f"Processed page {page_num} with {len(cards)} cards.")
+
+            # Перезапуск драйвера после каждой страницы, чтобы избежать утечек памяти
+            driver.quit()
+            time.sleep(2)
+            driver = webdriver.Chrome(options=chrome_options)
+
+            page_num += 1
+        except Exception as e:
+            logger.error(f"Error fetching/parsing page {page_num}: {e}")
+            break
+
 if __name__ == "__main__":
+    driver = webdriver.Chrome(options=chrome_options)
+    logger.info("Initialized headless Chrome driver.")
     try:
         get_links()
-        #update_missing_descriptions_and_images()
+        # Чтобы обновить описания и отправить в телеграм, раскомментируй ниже:
+        # update_missing_descriptions_and_images(cursor, conn, driver)
         logger.info("Script finished successfully.")
     except Exception as e:
         logger.error(f"Fatal error in main execution: {e}")
