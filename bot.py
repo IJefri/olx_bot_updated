@@ -75,25 +75,8 @@ def is_new_listing(listing_id):
         cursor.execute("UPDATE listings SET last_seen_dt = %s WHERE id = %s", (now, listing_id))
         return False
 
-# Chrome options
-chrome_options = Options()
-chrome_options.add_argument("--no-sandbox")
-chrome_options.add_argument("--disable-dev-shm-usage")
-chrome_options.add_argument("--headless=new")  # новий headless режим в Chrome 112+
-chrome_options.add_argument("--disable-gpu")
-chrome_options.add_argument("--window-size=1024,768")  # зменшене вікно для економії пам'яті
-
-BASE_URL = "https://www.olx.ua/uk/nedvizhimost/kvartiry/dolgosrochnaya-arenda-kvartir/kiev/"
-PARAMS = {
-    "currency": "UAH",
-    "search[order]": "created_at:desc",
-    "search[filter_float_price:from]": "12000",
-    "search[filter_float_price:to]": "20000",
-    "search[filter_float_total_area:from]": "30",
-    "page": 1
-}
-
 def build_url(params):
+    BASE_URL = "https://www.olx.ua/uk/nedvizhimost/kvartiry/dolgosrochnaya-arenda-kvartir/kiev/"
     return BASE_URL + "?" + urlencode(params)
 
 def parse_card(card):
@@ -122,36 +105,59 @@ def parse_card(card):
         logger.error(f"Error parsing card: {e}")
 
 def get_links(pages):
-    driver = webdriver.Chrome(options=chrome_options)
-    log_memory("Driver started")
-    try:
-        for page_num in range(1, pages + 1):
-            PARAMS["page"] = page_num
+    chrome_options = Options()
+    chrome_options.binary_location = "/usr/bin/chromium"
+    chrome_options.add_argument("--headless=new")  # новий headless режим
+    chrome_options.add_argument("--disable-gpu")
+    chrome_options.add_argument("--no-sandbox")
+    chrome_options.add_argument("--disable-dev-shm-usage")
+    chrome_options.add_argument("--disable-extensions")
+    chrome_options.add_argument("--disable-background-networking")
+    chrome_options.add_argument("--disable-default-apps")
+    chrome_options.add_argument("--disable-plugins-discovery")
+    chrome_options.add_argument("--disable-software-rasterizer")
+    chrome_options.add_argument("--single-process")
+    chrome_options.add_argument("--no-zygote")
+    chrome_options.add_argument("--window-size=1920,1080")
+    
+    for page_num in range(1, pages + 1):
+        logger.info(f"Starting browser for page {page_num}")
+        driver = webdriver.Chrome(options=chrome_options)
+        try:
+            PARAMS = {
+                "currency": "UAH",
+                "search[order]": "created_at:desc",
+                "search[filter_float_price:from]": "12000",
+                "search[filter_float_price:to]": "20000",
+                "search[filter_float_total_area:from]": "30",
+                "page": page_num
+            }
             url = build_url(PARAMS)
+            logger.info(f"Loading URL: {url}")
             driver.get(url)
             wait = WebDriverWait(driver, 10)
             cards = wait.until(EC.presence_of_all_elements_located((By.CSS_SELECTOR, "div[data-cy='l-card']")))
             for card in cards:
                 parse_card(card)
-                del card
             logger.info(f"Page {page_num} processed ({len(cards)} cards).")
-            
-            # Очищуємо кеш і куки браузера для зменшення пам’яті
-            try:
-                driver.execute_cdp_cmd("Network.clearBrowserCache", {})
-                driver.execute_cdp_cmd("Network.clearBrowserCookies", {})
-            except Exception as e:
-                logger.warning(f"Failed to clear cache/cookies: {e}")
-
-            gc.collect()
             log_memory(f"After page {page_num}")
-            time.sleep(1)  # Невелика пауза для стабільності
-    finally:
-        driver.quit()
-        log_memory("Driver quit")
+            driver.quit()
+            del driver
+            gc.collect()
+            time.sleep(2)  # щоб зменшити навантаження
+        except Exception as e:
+            logger.error(f"Error on page {page_num}: {e}")
+            try:
+                driver.quit()
+            except:
+                pass
+            del driver
+            gc.collect()
+            break
 
 if __name__ == "__main__":
     try:
+        logger.info("Starting scraping process")
         get_links(3)
         logger.info("Finished scraping.")
     finally:
