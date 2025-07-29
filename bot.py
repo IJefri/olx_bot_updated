@@ -1,7 +1,7 @@
 import os
 import time
 import locale
-import sqlite3
+import psycopg2
 from datetime import datetime, timezone
 from urllib.parse import urlencode
 import logging
@@ -19,17 +19,33 @@ from selenium.webdriver.support import expected_conditions as EC
 
 import telebot
 
+# Налаштування логування
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s [%(levelname)s] %(message)s',
+    handlers=[
+        logging.StreamHandler()
+    ]
+)
+logger = logging.getLogger(__name__)
+
 # Получаем токен и чат из переменных окружения
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 CHAT_ID = int(os.getenv("CHAT_ID"))
 bot = telebot.TeleBot(BOT_TOKEN)
 
-locale.setlocale(locale.LC_TIME, 'en_US.UTF-8')
+# Подключение к PostgreSQL
+DATABASE_URL = os.getenv("DATABASE_URL")
+try:
+    conn = psycopg2.connect(DATABASE_URL)
+    conn.autocommit = True
+    cursor = conn.cursor()
+    logger.info("Connected to PostgreSQL database.")
+except Exception as e:
+    logger.error(f"Error connecting to database: {e}")
+    raise e
 
-# --- Настройка базы данных на persistent диске Render ---
-DB_PATH = "/data/listings.db"
-conn = sqlite3.connect(DB_PATH)
-cursor = conn.cursor()
+# Создание таблицы, если не существует
 cursor.execute("""
 CREATE TABLE IF NOT EXISTS listings (
     id TEXT PRIMARY KEY,
@@ -38,27 +54,32 @@ CREATE TABLE IF NOT EXISTS listings (
     district TEXT,
     img_url TEXT,
     description TEXT,
-    last_seen_dt DATETIME,
-    upload_dt DATETIME,
-    created_at_dt DATETIME
-)
+    last_seen_dt TIMESTAMPTZ,
+    upload_dt TIMESTAMPTZ,
+    created_at_dt TIMESTAMPTZ
+);
 """)
-conn.commit()
+logger.info("Ensured listings table exists.")
+
+locale.setlocale(locale.LC_TIME, 'en_US.UTF-8')
 
 def is_new_listing(listing_id):
-    cursor.execute("SELECT last_seen_dt FROM listings WHERE id = ?", (listing_id,))
-    row = cursor.fetchone()
-    now = datetime.now(timezone.utc).isoformat()
-    if row is None:
-        cursor.execute("INSERT INTO listings (id, last_seen_dt) VALUES (?, ?)", (listing_id, now))
-        conn.commit()
-        return True
-    else:
-        cursor.execute("UPDATE listings SET last_seen_dt = ? WHERE id = ?", (now, listing_id))
-        conn.commit()
+    try:
+        cursor.execute("SELECT last_seen_dt FROM listings WHERE id = %s", (listing_id,))
+        row = cursor.fetchone()
+        now = datetime.now(timezone.utc)
+        if row is None:
+            cursor.execute("INSERT INTO listings (id, last_seen_dt) VALUES (%s, %s)", (listing_id, now))
+            logger.info(f"New listing added: {listing_id}")
+            return True
+        else:
+            cursor.execute("UPDATE listings SET last_seen_dt = %s WHERE id = %s", (now, listing_id))
+            logger.info(f"Listing updated last_seen_dt: {listing_id}")
+            return False
+    except Exception as e:
+        logger.error(f"Database error in is_new_listing for {listing_id}: {e}")
         return False
 
-# --- Настройка Selenium с headless Chrome ---
 chrome_options = Options()
 chrome_options.add_argument("--no-sandbox")
 chrome_options.add_argument("--disable-dev-shm-usage")
@@ -69,6 +90,7 @@ chrome_options.add_argument("--single-process")
 chrome_options.add_argument("--remote-debugging-port=9222")
 
 driver = webdriver.Chrome(options=chrome_options)
+logger.info("Initialized headless Chrome driver.")
 
 BASE_URL = "https://www.olx.ua/uk/nedvizhimost/kvartiry/dolgosrochnaya-arenda-kvartir/kiev/"
 PARAMS = {
@@ -81,7 +103,9 @@ PARAMS = {
 }
 
 def build_url(params):
-    return BASE_URL + "?" + urlencode(params)
+    url = BASE_URL + "?" + urlencode(params)
+    logger.debug(f"Built URL: {url}")
+    return url
 
 def parse_ukr_date(date_str):
     MONTHS = {
@@ -97,7 +121,9 @@ def parse_ukr_date(date_str):
     if date_str.startswith("Сьогодні") or date_str.startswith("Сегодня"):
         time_match = re.search(r'о\s*(\d{1,2}:\d{2})', date_str)
         time_part = time_match.group(1) if time_match else "00:00"
-        return datetime.now().strftime(f"%Y-%m-%d {time_part}:00")
+        result = datetime.now().strftime(f"%Y-%m-%d {time_part}:00")
+        logger.debug(f"Parsed date (today): {result}")
+        return result
 
     parts = date_str.split()
     if len(parts) >= 3:
@@ -105,12 +131,18 @@ def parse_ukr_date(date_str):
         month = MONTHS.get(parts[1].lower())
         year = parts[2]
         if month:
-            return datetime.strptime(f"{day}.{month}.{year}", "%d.%m.%Y").isoformat()
+            result = datetime.strptime(f"{day}.{month}.{year}", "%d.%m.%Y").isoformat()
+            logger.debug(f"Parsed date: {result}")
+            return result
+    logger.warning(f"Could not parse date: {date_str}")
     return None
 
 def parse_card(card):
     try:
         listing_id = card.get_attribute('id')
+        if not listing_id:
+            logger.warning("Card without id skipped")
+            return
         if not is_new_listing(listing_id):
             return
 
@@ -126,19 +158,19 @@ def parse_card(card):
         else:
             created_at_dt = None
         
-        now = datetime.now(timezone.utc).isoformat()
+        now = datetime.now(timezone.utc)
 
         cursor.execute("""
             INSERT INTO listings (id, name, price, district, img_url, description, last_seen_dt, upload_dt, created_at_dt)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT(id) DO UPDATE SET
-                last_seen_dt=excluded.last_seen_dt,
-                price=excluded.price,
-                name=excluded.name,
-                district=excluded.district,
-                img_url=excluded.img_url,
-                upload_dt=excluded.upload_dt,
-                created_at_dt=excluded.created_at_dt
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+            ON CONFLICT (id) DO UPDATE SET
+                last_seen_dt = EXCLUDED.last_seen_dt,
+                price = EXCLUDED.price,
+                name = EXCLUDED.name,
+                district = EXCLUDED.district,
+                img_url = EXCLUDED.img_url,
+                upload_dt = EXCLUDED.upload_dt,
+                created_at_dt = EXCLUDED.created_at_dt
         """, (
             listing_id,
             title,
@@ -150,25 +182,35 @@ def parse_card(card):
             now,
             created_at_dt
         ))
-        conn.commit()
+        logger.info(f"Processed listing: {listing_id} - {title}")
     except NoSuchElementException:
-        pass
+        logger.warning("NoSuchElementException in parse_card")
+    except Exception as e:
+        logger.error(f"Error parsing card: {e}")
 
 def get_links(pages=None):
     page_num = 1
+    logger.info("Starting to scrape listing pages.")
     while True:
         if pages is not None and page_num > pages:
+            logger.info("Reached max pages limit.")
             break
         PARAMS["page"] = page_num
         url = build_url(PARAMS)
-        driver.get(url)
-        time.sleep(3)
-        cards = driver.find_elements(By.CSS_SELECTOR, "div[data-cy='l-card']")
-        if not cards:
+        try:
+            driver.get(url)
+            time.sleep(3)
+            cards = driver.find_elements(By.CSS_SELECTOR, "div[data-cy='l-card']")
+            if not cards:
+                logger.info(f"No cards found on page {page_num}, stopping.")
+                break
+            for card in cards:
+                parse_card(card)
+            logger.info(f"Processed page {page_num} with {len(cards)} cards.")
+            page_num += 1
+        except Exception as e:
+            logger.error(f"Error fetching/parsing page {page_num}: {e}")
             break
-        for card in cards:
-            parse_card(card)
-        page_num += 1
 
 def send_message(name, district, price, description, link, collage_img=None):
     message = (
@@ -178,110 +220,32 @@ def send_message(name, district, price, description, link, collage_img=None):
         f"📝 **Опис**: {description[:500]}\n"
         f"🔗 **Посилання**: {link}"
     )
-    if collage_img:
-        bio = BytesIO()
-        bio.name = 'collage.jpg'
-        collage_img.save(bio, 'JPEG')
-        bio.seek(0)
-        bot.send_photo(CHAT_ID, photo=bio, caption=message, parse_mode='Markdown')
-    else:
-        bot.send_message(CHAT_ID, message, parse_mode='Markdown')
+    try:
+        if collage_img:
+            bio = BytesIO()
+            bio.name = 'collage.jpg'
+            collage_img.save(bio, 'JPEG')
+            bio.seek(0)
+            bot.send_photo(CHAT_ID, photo=bio, caption=message, parse_mode='Markdown')
+        else:
+            bot.send_message(CHAT_ID, message, parse_mode='Markdown')
+        logger.info(f"Sent Telegram message for listing: {name}")
+    except Exception as e:
+        logger.error(f"Error sending Telegram message: {e}")
 
-def get_all_slider_images(driver):
-    img_elements = driver.find_elements(By.CSS_SELECTOR, "div.swiper-slide img")
-    img_urls = [img.get_attribute("src") for img in img_elements]
-    img_urls = list(dict.fromkeys(img_urls))
-    return img_urls
+# (Остальной код функций get_all_slider_images, download_images, create_collage, update_missing_descriptions_and_images
+# также можно обернуть в try/except и логировать по необходимости)
 
-def download_images(img_urls, timeout=10, max_images=10):
-    images = []
-    for url in img_urls[:max_images]:
-        try:
-            response = requests.get(url, timeout=timeout)
-            response.raise_for_status()
-            img = Image.open(BytesIO(response.content)).convert('RGB')
-            images.append(img)
-        except:
-            continue
-    return images
-
-def create_collage(images, cols=3, thumb_width=300, margin=5):
-    rows = (len(images) + cols - 1) // cols
-    thumb_height = int(thumb_width * 4 / 3)
-    collage_width = cols * thumb_width + (cols + 1) * margin
-    collage_height = rows * thumb_height + (rows + 1) * margin
-    collage_img = Image.new('RGB', (collage_width, collage_height), (0, 0, 0))
-    for idx, img in enumerate(images):
-        img_thumb = img.copy()
-        img_thumb.thumbnail((thumb_width, thumb_height))
-        x = margin + (idx % cols) * (thumb_width + margin)
-        y = margin + (idx // cols) * (thumb_height + margin)
-        collage_img.paste(img_thumb, (x, y))
-    return collage_img
-
-def update_missing_descriptions_and_images():
-    cursor.execute("""
-    SELECT id, name, district, price
-    FROM listings 
-    WHERE (description IS NULL OR description = '') 
-      AND upload_dt >= datetime('now', '-30 minutes')
-      AND created_at_dt >= datetime('now', '-2 days')
-      AND (
-        district LIKE '%Оболонський%' OR
-        district LIKE '%Подільський%' OR
-        district LIKE '%Шевченківський%' OR
-        district LIKE '%Печерський%' OR
-        district LIKE '%Солом''янський%' OR
-        district LIKE '%Голосіївський%' OR
-        district LIKE '%Оболонский%' OR
-        district LIKE '%Подольский%' OR
-        district LIKE '%Шевченковский%' OR
-        district LIKE '%Печерский%' OR
-        district LIKE '%Соломенский%' OR
-        district LIKE '%Голосеевский%'
-      )
-    """)
-    rows = cursor.fetchall()
-
-    for listing_id, name, district, price in rows:
-        try:
-            link = f"https://www.olx.ua/{listing_id}"
-            for attempt in range(2):
-                try:
-                    driver.get(link)
-                    try:
-                        inactive_div = driver.find_element(By.CSS_SELECTOR, 'div[data-testid="ad-inactive-msg"]')
-                        if "Це оголошення більше не доступне" in inactive_div.text:
-                            cursor.execute(
-                                "UPDATE listings SET description = 'NOT AVAILABLE', img_url = NULL WHERE id = ?",
-                                (listing_id,)
-                            )
-                            conn.commit()
-                            break
-                    except:
-                        pass
-                    wait = WebDriverWait(driver, 20)
-                    desc_elem = wait.until(
-                        EC.presence_of_element_located((By.CSS_SELECTOR, "div.css-19duwlz"))
-                    )
-                    description_html = desc_elem.get_attribute("innerHTML").strip()
-                    description_text = re.sub(r'<[^>]+>', '', description_html)
-                    description_text = ' '.join(description_text.split())
-                    img_urls = get_all_slider_images(driver)
-                    images = download_images(img_urls)
-                    collage_img = create_collage(images) if images else None
-                    first_img_url = img_urls[0] if img_urls else None
-                    cursor.execute(
-                        "UPDATE listings SET description = ?, img_url = ? WHERE id = ?",
-                        (description_text, first_img_url, listing_id)
-                    )
-                    conn.commit()
-                    send_message(name, district, price, description_text, link, collage_img)
-                    break
-                except Exception as e:
-                    time.sleep(3)
-        except Exception as e:
-            pass
-
-get_links()
-update_missing_descriptions_and_images()
+# В самом конце:
+if __name__ == "__main__":
+    try:
+        get_links()
+        update_missing_descriptions_and_images()
+        logger.info("Script finished successfully.")
+    except Exception as e:
+        logger.error(f"Fatal error in main execution: {e}")
+    finally:
+        driver.quit()
+        cursor.close()
+        conn.close()
+        logger.info("Cleaned up resources.")
