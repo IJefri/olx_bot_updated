@@ -1,0 +1,10 @@
+services:
+  - type: cron
+    name: olx-bot
+    env: python
+    plan: free
+    schedule: "*/5 * * * *"
+    disk:
+      name: data
+      mountPath: /data
+      sizeGB: 1
