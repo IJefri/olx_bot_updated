@@ -315,9 +315,9 @@ if __name__ == "__main__":
     driver = webdriver.Chrome(options=chrome_options)
     logger.info("Initialized headless Chrome driver.")
     try:
-        get_links()
+        get_links(3)
         # Чтобы обновить описания и отправить в телеграм, раскомментируй ниже:
-        # update_missing_descriptions_and_images(cursor, conn, driver)
+        update_missing_descriptions_and_images(cursor, conn, driver)
         logger.info("Script finished successfully.")
     except Exception as e:
         logger.error(f"Fatal error in main execution: {e}")
