@@ -200,7 +200,7 @@ def get_links(pages=3):
 if __name__ == "__main__":
     get_links(3)
     driver = webdriver.Chrome(options=chrome_options)
-    update_missing_descriptions_and_images(driver)
+    #update_missing_descriptions_and_images(driver)
     driver.quit()
     cursor.close()
     conn.close()
