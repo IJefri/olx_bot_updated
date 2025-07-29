@@ -90,6 +90,14 @@ chrome_options.add_argument("--window-size=1920,1080")
 chrome_options.add_argument("--single-process")
 chrome_options.add_argument("--remote-debugging-port=9222")
 
+# Отключаем загрузку изображений, стилей и шрифтов для экономии памяти
+prefs = {
+    "profile.managed_default_content_settings.images": 2,
+    "profile.managed_default_content_settings.stylesheets": 2,
+    "profile.managed_default_content_settings.fonts": 2,
+}
+chrome_options.add_experimental_option("prefs", prefs)
+
 driver = webdriver.Chrome(options=chrome_options)
 logger.info("Initialized headless Chrome driver.")
 
@@ -192,6 +200,7 @@ def parse_card(card):
 def get_links(pages=None):
     page_num = 1
     logger.info("Starting to scrape listing pages.")
+    global driver
     while True:
         if pages is not None and page_num > pages:
             logger.info("Reached max pages limit.")
@@ -200,7 +209,10 @@ def get_links(pages=None):
         url = build_url(PARAMS)
         try:
             driver.get(url)
-            time.sleep(3)
+            
+            wait = WebDriverWait(driver, 10)
+            wait.until(EC.presence_of_all_elements_located((By.CSS_SELECTOR, "div[data-cy='l-card']")))
+            
             cards = driver.find_elements(By.CSS_SELECTOR, "div[data-cy='l-card']")
             if not cards:
                 logger.info(f"No cards found on page {page_num}, stopping.")
@@ -208,6 +220,13 @@ def get_links(pages=None):
             for card in cards:
                 parse_card(card)
             logger.info(f"Processed page {page_num} with {len(cards)} cards.")
+            
+            if page_num % 5 == 0:
+                driver.quit()
+                time.sleep(3)
+                driver = webdriver.Chrome(options=chrome_options)
+                logger.info("Restarted Chrome driver to free memory.")
+
             page_num += 1
         except Exception as e:
             logger.error(f"Error fetching/parsing page {page_num}: {e}")
@@ -266,7 +285,6 @@ def update_missing_descriptions_and_images():
             link = f"https://www.olx.ua/{listing_id}"
             driver.get(link)
             
-            # Проверка, что объявление доступно
             try:
                 inactive_div = driver.find_element(By.CSS_SELECTOR, 'div[data-testid="ad-inactive-msg"]')
                 if "Це оголошення більше не доступне" in inactive_div.text:
