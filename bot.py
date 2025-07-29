@@ -12,13 +12,13 @@ from io import BytesIO
 from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.chrome.options import Options
-from selenium.common.exceptions import NoSuchElementException
+from selenium.common.exceptions import NoSuchElementException, WebDriverException
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 
 import telebot
 
-# Настройка логування
+# Логування
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s [%(levelname)s] %(message)s',
@@ -26,12 +26,12 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Отримуємо токен і чат із змінних середовища
+# Телеграм-бот
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 CHAT_ID = int(os.getenv("CHAT_ID"))
 bot = telebot.TeleBot(BOT_TOKEN)
 
-# Підключення до PostgreSQL
+# Підключення до бази
 DATABASE_URL = os.getenv("DATABASE_URL")
 try:
     conn = psycopg2.connect(DATABASE_URL)
@@ -42,7 +42,7 @@ except Exception as e:
     logger.error(f"Error connecting to database: {e}")
     raise e
 
-# Створення таблиці, якщо не існує
+# Створення таблиці
 cursor.execute("""
 CREATE TABLE IF NOT EXISTS listings (
     id TEXT PRIMARY KEY,
@@ -58,7 +58,7 @@ CREATE TABLE IF NOT EXISTS listings (
 """)
 logger.info("Ensured listings table exists.")
 
-# Встановлення локалі для парсингу дат
+# Локаль (для парсингу дат)
 try:
     locale.setlocale(locale.LC_TIME, 'en_US.UTF-8')
 except locale.Error:
@@ -89,6 +89,12 @@ chrome_options.add_argument("--disable-gpu")
 chrome_options.add_argument("--window-size=1920,1080")
 chrome_options.add_argument("--single-process")
 chrome_options.add_argument("--remote-debugging-port=9222")
+# Додаткові опції для стабільності
+chrome_options.add_argument("--disable-extensions")
+chrome_options.add_argument("--disable-background-networking")
+chrome_options.add_argument("--disable-sync")
+chrome_options.add_argument("--disable-translate")
+chrome_options.add_argument("--disable-features=VizDisplayCompositor")
 
 BASE_URL = "https://www.olx.ua/uk/nedvizhimost/kvartiry/dolgosrochnaya-arenda-kvartir/kiev/"
 PARAMS = {
@@ -135,7 +141,7 @@ def parse_ukr_date(date_str):
     logger.warning(f"Could not parse date: {date_str}")
     return None
 
-def parse_card(card, cursor):
+def parse_card(card):
     try:
         listing_id = card.get_attribute('id')
         if not listing_id:
@@ -210,7 +216,7 @@ def send_message(name, district, price, description, link, first_img_url=None):
     except Exception as e:
         logger.error(f"Error sending Telegram message: {e}")
 
-def update_missing_descriptions_and_images(cursor, conn):
+def update_missing_descriptions_and_images():
     global driver
     logger.info("Starting update of missing descriptions and images.")
     cursor.execute("""
@@ -240,8 +246,12 @@ def update_missing_descriptions_and_images(cursor, conn):
     for idx, (listing_id, name, district, price) in enumerate(rows):
         try:
             link = f"https://www.olx.ua/{listing_id}"
-            logger.debug(f"Updating listing {listing_id}: opening {link}")
-            driver.get(link)
+            logger.info(f"Opening listing page {listing_id}: {link}")
+            try:
+                driver.get(link)
+            except WebDriverException as e:
+                logger.error(f"WebDriverException on listing {listing_id}: {e}")
+                continue
 
             try:
                 inactive_div = driver.find_element(By.CSS_SELECTOR, 'div[data-testid="ad-inactive-msg"]')
@@ -278,8 +288,9 @@ def update_missing_descriptions_and_images(cursor, conn):
 
             send_message(name, district, price, description_text, link, first_img_url)
 
-            if idx > 0 and idx % 10 == 0:
-                logger.info("Restarting webdriver to avoid memory leaks (after 10 updates).")
+            # Перезапускаємо драйвер кожні 5 оновлень для уникнення утікання пам’яті
+            if idx > 0 and idx % 5 == 0:
+                logger.info("Restarting webdriver to avoid memory leaks (after 5 updates).")
                 driver.quit()
                 time.sleep(2)
                 driver = webdriver.Chrome(options=chrome_options)
@@ -289,9 +300,9 @@ def update_missing_descriptions_and_images(cursor, conn):
             time.sleep(3)
 
 def get_links(pages=None):
+    global driver
     page_num = 1
     logger.info("Starting to scrape listing pages.")
-    global driver
     while True:
         if pages is not None and page_num > pages:
             logger.info("Reached max pages limit.")
@@ -299,7 +310,6 @@ def get_links(pages=None):
         PARAMS["page"] = page_num
         url = build_url(PARAMS)
         try:
-            logger.info(f"Fetching page {page_num} with URL: {url}")
             driver.get(url)
             wait = WebDriverWait(driver, 10)
             wait.until(EC.presence_of_all_elements_located((By.CSS_SELECTOR, "div[data-cy='l-card']")))
@@ -310,11 +320,11 @@ def get_links(pages=None):
                 break
 
             for card in cards:
-                parse_card(card, cursor)
+                parse_card(card)
 
             logger.info(f"Processed page {page_num} with {len(cards)} cards.")
 
-            # Перезапуск драйвера після кожної сторінки, щоб уникнути витоків пам'яті
+            # Перезапускаємо драйвер після кожної сторінки для уникнення утікання пам’яті
             driver.quit()
             time.sleep(2)
             driver = webdriver.Chrome(options=chrome_options)
@@ -329,8 +339,7 @@ if __name__ == "__main__":
     logger.info("Initialized headless Chrome driver.")
     try:
         get_links(3)
-        # Оновити опис та відправити в телеграм (розкоментувати при потребі)
-        update_missing_descriptions_and_images(cursor, conn)
+        update_missing_descriptions_and_images()
         logger.info("Script finished successfully.")
     except Exception as e:
         logger.error(f"Fatal error in main execution: {e}")
