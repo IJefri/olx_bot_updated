@@ -87,64 +87,71 @@ def parse_ukr_date(date_str):
         "июля": "07", "августа": "08", "сентября": "09", "октября": "10", "ноября": "11", "декабря": "12"
     }
 
-    logging.info(f"Вхідний рядок дати: {date_str}")
+    logger.info(f"Вхідний рядок дати: {date_str}")
     date_str = date_str.replace("р.", "").strip()
-    logging.info(f"Рядок після очищення: {date_str}")
+    logger.info(f"Рядок після очищення: {date_str}")
 
     # Сьогодні / Сегодня
     if date_str.startswith("Сьогодні") or date_str.startswith("Сегодня"):
-        logging.info("Рядок починається з 'Сьогодні' або 'Сегодня'")
+        logger.info("Рядок починається з 'Сьогодні' або 'Сегодня'")
         time_match = re.search(r'(\d{1,2}:\d{2})', date_str)
         if time_match:
             time_part = time_match.group(1)
-            logging.info(f"Знайдений час: {time_part}")
+            logger.info(f"Знайдений час: {time_part}")
         else:
             time_part = "00:00"
-            logging.info("Час не знайдений, використовую за замовчуванням: 00:00")
+            logger.info("Час не знайдений, використовую за замовчуванням: 00:00")
     
         dt_local = datetime.strptime(f"{datetime.now().strftime('%Y-%m-%d')} {time_part}", "%Y-%m-%d %H:%M")
         dt_utc = dt_local.astimezone(timezone.utc)
-        logging.info(f"Повертаю datetime у UTC: {dt_utc}")
+        logger.info(f"Повертаю datetime у UTC: {dt_utc}")
         return dt_utc
 
     # Формат "30 липня 2024"
     parts = date_str.split()
-    logging.info(f"Розбиття рядка на частини: {parts}")
+    logger.info(f"Розбиття рядка на частини: {parts}")
     if len(parts) >= 3:
         day = parts[0]
         month_name = parts[1].lower()
         year = parts[2]
         month = MONTHS.get(month_name)
-        logging.info(f"Визначено день: {day}, місяць: {month_name} -> {month}, рік: {year}")
+        logger.info(f"Визначено день: {day}, місяць: {month_name} -> {month}, рік: {year}")
         if month:
             dt = datetime.strptime(f"{day}.{month}.{year}", "%d.%m.%Y")
             dt_utc = dt.replace(tzinfo=timezone.utc)
-            logging.info(f"Повертаю datetime у UTC: {dt_utc}")
+            logger.info(f"Повертаю datetime у UTC: {dt_utc}")
             return dt_utc
 
-    
-
-    logging.warning("Не вдалося розпізнати дату, повертаю None")
+    logger.warning("Не вдалося розпізнати дату, повертаю None")
     return None
 
 def parse_card(card):
     try:
-        listing_id = card.get_attribute('id')
+        listing_id = card.get("id")  # берем id из div[data-cy='l-card']
         if not listing_id or not is_new_listing(listing_id):
             return
 
-        title = card.find_element(By.CSS_SELECTOR, "a.css-1tqlkj0 h4").text
-        price = card.find_element(By.CSS_SELECTOR, '[data-testid="ad-price"]').text
-        district = card.find_element(By.CSS_SELECTOR, '[data-testid="location-date"]').text
-        img_url = card.find_element(By.CSS_SELECTOR, 'img.css-8wsg1m').get_attribute('src')
+        title_tag = card.select_one("a.css-1tqlkj0 h4")
+        title = title_tag.get_text(strip=True) if title_tag else ""
+
+        price_tag = card.select_one('[data-testid="ad-price"]')
+        price = price_tag.get_text(strip=True) if price_tag else ""
+
+        district_tag = card.select_one('[data-testid="location-date"]')
+        district = district_tag.get_text(strip=True) if district_tag else ""
+
+        img_tag = card.select_one("img.css-8wsg1m")
+        img_url = img_tag.get("src") if img_tag else None
+
         now = datetime.now(timezone.utc)
 
-        # Виділяємо дату створення
-        if ' - ' in district:
-            _, date_part = district.split(' - ', 1)
-            created_at_dt = parse_ukr_date(date_part.strip())
-        else:
-            created_at_dt = now
+        # Парсим дату из district, если есть, например "Київ, Дарницький - Сьогодні о 12:08"
+        created_at_dt = now
+        if district and " - " in district:
+            _, date_part = district.split(" - ", 1)
+            parsed_date = parse_ukr_date(date_part)
+            if parsed_date:
+                created_at_dt = parsed_date
 
         cursor.execute("""
             INSERT INTO listings (id, name, price, district, img_url, description, last_seen_dt, upload_dt, created_at_dt)
@@ -173,60 +180,47 @@ def parse_card(card):
         logger.error(f"Error parsing card: {e}")
 
 def get_links(pages):
-    chrome_options = Options()
-    chrome_options.binary_location = "/usr/bin/chromium"
-    chrome_options.add_argument("--headless=new")  # новий headless режим
-    chrome_options.add_argument("--disable-gpu")
-    chrome_options.add_argument("--no-sandbox")
-    chrome_options.add_argument("--disable-dev-shm-usage")
-    chrome_options.add_argument("--disable-extensions")
-    chrome_options.add_argument("--disable-background-networking")
-    chrome_options.add_argument("--disable-default-apps")
-    chrome_options.add_argument("--disable-plugins-discovery")
-    chrome_options.add_argument("--disable-software-rasterizer")
-    chrome_options.add_argument("--single-process")
-    chrome_options.add_argument("--no-zygote")
-    chrome_options.add_argument("--window-size=1920,1080")
-    
+    session = requests.Session()
+    session.headers.update({
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0 Safari/537.36"
+    })
+
     for page_num in range(1, pages + 1):
-        logger.info(f"Starting browser for page {page_num}")
-        driver = webdriver.Chrome(options=chrome_options)
+        logger.info(f"Fetching page {page_num}")
+        PARAMS = {
+            "currency": "UAH",
+            "search[order]": "created_at:desc",
+            "search[filter_float_price:from]": "12000",
+            "search[filter_float_price:to]": "20000",
+            "search[filter_float_total_area:from]": "30",
+            "page": page_num
+        }
+        url = build_url(PARAMS)
+        logger.info(f"Loading URL: {url}")
+
         try:
-            PARAMS = {
-                "currency": "UAH",
-                "search[order]": "created_at:desc",
-                "search[filter_float_price:from]": "12000",
-                "search[filter_float_price:to]": "20000",
-                "search[filter_float_total_area:from]": "30",
-                "page": page_num
-            }
-            url = build_url(PARAMS)
-            logger.info(f"Loading URL: {url}")
-            driver.get(url)
-            wait = WebDriverWait(driver, 10)
-            cards = wait.until(EC.presence_of_all_elements_located((By.CSS_SELECTOR, "div[data-cy='l-card']")))
+            resp = session.get(url, timeout=15)
+            resp.raise_for_status()
+            soup = BeautifulSoup(resp.text, "html.parser")
+
+            # Находи все карточки объявлений
+            cards = soup.select("div[data-cy='l-card']")
+            logger.info(f"Found {len(cards)} cards on page {page_num}")
+
             for card in cards:
                 parse_card(card)
-            logger.info(f"Page {page_num} processed ({len(cards)} cards).")
-            log_memory(f"After page {page_num}")
-            driver.quit()
-            del driver
+
+            #log_memory(f"After page {page_num}")
             gc.collect()
-            time.sleep(2)  # щоб зменшити навантаження
+            time.sleep(2)
         except Exception as e:
             logger.error(f"Error on page {page_num}: {e}")
-            try:
-                driver.quit()
-            except:
-                pass
-            del driver
-            gc.collect()
             break
 
 if __name__ == "__main__":
     try:
         logger.info("Starting scraping process")
-        get_links(3)
+        get_links(25)
         logger.info("Finished scraping.")
     finally:
         cursor.close()
