@@ -249,13 +249,21 @@ def send_message(name, district, price, description, link, collage_img=None):
     except Exception as e:
         logger.error(f"Error sending Telegram message: {e}")
 
+def resize_image_url(url, new_size="600x300"):
+    pattern = r"(s=\d+x\d+)$"
+    if re.search(pattern, url):
+        return re.sub(pattern, f"s={new_size}", url)
+    return url
+
 def get_all_slider_images(soup):
     img_elements = soup.select('div.swiper-zoom-container img')
     img_urls = []
     for img in img_elements:
         src = img.get('src')
-        if src and src not in img_urls:
-            img_urls.append(src)
+        if src:
+            src_resized = resize_image_url(src)
+            if src_resized not in img_urls:
+                img_urls.append(src_resized)
     logger.info(f"Found {len(img_urls)} image URLs in slider")
     return img_urls
 
