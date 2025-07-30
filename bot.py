@@ -79,27 +79,76 @@ def build_url(params):
     BASE_URL = "https://www.olx.ua/uk/nedvizhimost/kvartiry/dolgosrochnaya-arenda-kvartir/kiev/"
     return BASE_URL + "?" + urlencode(params)
 
+def parse_ukr_date(date_str):
+    MONTHS = {
+        "січня": "01", "лютого": "02", "березня": "03", "квітня": "04", "травня": "05", "червня": "06",
+        "липня": "07", "серпня": "08", "вересня": "09", "жовтня": "10", "листопада": "11", "грудня": "12",
+        "января": "01", "февраля": "02", "марта": "03", "апреля": "04", "мая": "05", "июня": "06",
+        "июля": "07", "августа": "08", "сентября": "09", "октября": "10", "ноября": "11", "декабря": "12"
+    }
+
+    date_str = date_str.replace("р.", "").strip()
+
+    # Сьогодні / Сегодня
+    if date_str.startswith("Сьогодні") or date_str.startswith("Сегодня"):
+        time_match = re.search(r'о\s*(\d{1,2}:\d{2})', date_str)
+        time_part = time_match.group(1) if time_match else "00:00"
+        dt_local = datetime.strptime(f"{datetime.now().strftime('%Y-%m-%d')} {time_part}", "%Y-%m-%d %H:%M")
+        return dt_local.astimezone(timezone.utc)
+
+    # Типу "30 липня 2024"
+    parts = date_str.split()
+    if len(parts) >= 3:
+        day = parts[0]
+        month = MONTHS.get(parts[1].lower())
+        year = parts[2]
+        if month:
+            dt = datetime.strptime(f"{day}.{month}.{year}", "%d.%m.%Y")
+            return dt.replace(tzinfo=timezone.utc)
+
+    return None
+
 def parse_card(card):
     try:
         listing_id = card.get_attribute('id')
         if not listing_id or not is_new_listing(listing_id):
             return
+
         title = card.find_element(By.CSS_SELECTOR, "a.css-1tqlkj0 h4").text
         price = card.find_element(By.CSS_SELECTOR, '[data-testid="ad-price"]').text
         district = card.find_element(By.CSS_SELECTOR, '[data-testid="location-date"]').text
         img_url = card.find_element(By.CSS_SELECTOR, 'img.css-8wsg1m').get_attribute('src')
         now = datetime.now(timezone.utc)
+
+        # Виділяємо дату створення
+        if ' - ' in district:
+            _, date_part = district.split(' - ', 1)
+            created_at_dt = parse_ukr_date(date_part.strip())
+        else:
+            created_at_dt = now
+
         cursor.execute("""
-            INSERT INTO listings (id, name, price, district, img_url, last_seen_dt, upload_dt)
-            VALUES (%s, %s, %s, %s, %s, %s, %s)
+            INSERT INTO listings (id, name, price, district, img_url, description, last_seen_dt, upload_dt, created_at_dt)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
             ON CONFLICT (id) DO UPDATE SET
                 last_seen_dt = EXCLUDED.last_seen_dt,
                 price = EXCLUDED.price,
                 name = EXCLUDED.name,
                 district = EXCLUDED.district,
                 img_url = EXCLUDED.img_url,
-                upload_dt = EXCLUDED.upload_dt
-        """, (listing_id, title, price, district, img_url, now, now))
+                upload_dt = EXCLUDED.upload_dt,
+                created_at_dt = EXCLUDED.created_at_dt
+        """, (
+            listing_id,
+            title,
+            price,
+            district,
+            img_url,
+            None,  # description
+            now,
+            now,
+            created_at_dt
+        ))
         logger.info(f"Processed: {listing_id} - {title}")
     except Exception as e:
         logger.error(f"Error parsing card: {e}")
