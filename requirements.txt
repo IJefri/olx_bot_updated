@@ -1,8 +1,6 @@
-selenium
 telebot
 requests
 Pillow
 psycopg2-binary
 psutil
 beautifulsoup4
-Pillow
