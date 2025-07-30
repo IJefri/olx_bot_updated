@@ -87,25 +87,42 @@ def parse_ukr_date(date_str):
         "июля": "07", "августа": "08", "сентября": "09", "октября": "10", "ноября": "11", "декабря": "12"
     }
 
+    logging.info(f"Вхідний рядок дати: {date_str}")
     date_str = date_str.replace("р.", "").strip()
+    logging.info(f"Рядок після очищення: {date_str}")
 
     # Сьогодні / Сегодня
     if date_str.startswith("Сьогодні") or date_str.startswith("Сегодня"):
+        logging.info("Рядок починається з 'Сьогодні' або 'Сегодня'")
         time_match = re.search(r'о\s*(\d{1,2}:\d{2})', date_str)
-        time_part = time_match.group(1) if time_match else "00:00"
-        dt_local = datetime.strptime(f"{datetime.now().strftime('%Y-%m-%d')} {time_part}", "%Y-%m-%d %H:%M")
-        return dt_local.astimezone(timezone.utc)
+        if time_match:
+            time_part = time_match.group(1)
+            logging.info(f"Знайдений час: {time_part}")
+        else:
+            time_part = "00:00"
+            logging.info("Час не знайдений, використовую за замовчуванням: 00:00")
 
-    # Типу "30 липня 2024"
+        dt_local = datetime.strptime(f"{datetime.now().strftime('%Y-%m-%d')} {time_part}", "%Y-%m-%d %H:%M")
+        dt_utc = dt_local.astimezone(timezone.utc)
+        logging.info(f"Повертаю datetime у UTC: {dt_utc}")
+        return dt_utc
+
+    # Формат "30 липня 2024"
     parts = date_str.split()
+    logging.info(f"Розбиття рядка на частини: {parts}")
     if len(parts) >= 3:
         day = parts[0]
-        month = MONTHS.get(parts[1].lower())
+        month_name = parts[1].lower()
         year = parts[2]
+        month = MONTHS.get(month_name)
+        logging.info(f"Визначено день: {day}, місяць: {month_name} -> {month}, рік: {year}")
         if month:
             dt = datetime.strptime(f"{day}.{month}.{year}", "%d.%m.%Y")
-            return dt.replace(tzinfo=timezone.utc)
+            dt_utc = dt.replace(tzinfo=timezone.utc)
+            logging.info(f"Повертаю datetime у UTC: {dt_utc}")
+            return dt_utc
 
+    logging.warning("Не вдалося розпізнати дату, повертаю None")
     return None
 
 def parse_card(card):
