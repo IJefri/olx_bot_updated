@@ -267,7 +267,7 @@ def parse_description(soup):
             return desc_elem.get_text(separator=' ', strip=True)
     return "Опис не знайдено"
 
-def download_images(img_urls, timeout=10, max_images=10):
+def download_images(img_urls, timeout=10, max_images=7, thumb_size=(300, 400)):
     images = []
     for url in img_urls[:max_images]:
         try:
@@ -275,8 +275,9 @@ def download_images(img_urls, timeout=10, max_images=10):
             response = requests.get(url, timeout=timeout)
             response.raise_for_status()
             img = Image.open(BytesIO(response.content)).convert('RGB')
+            img.thumbnail(thumb_size)  # уменьшение размера сразу
             images.append(img)
-            logger.info(f"Successfully downloaded image: {url}")
+            logger.info(f"Successfully downloaded and resized image: {url}")
         except requests.exceptions.Timeout:
             logger.warning(f"Timeout while downloading: {url}")
         except Exception as e:
@@ -284,30 +285,36 @@ def download_images(img_urls, timeout=10, max_images=10):
     logger.info(f"Downloaded {len(images)} images out of {len(img_urls)} URLs")
     return images
 
-def create_collage(images, cols=3, thumb_width=300, margin=5):
+
+def create_collage(images, cols=3, margin=5):
     if not images:
         logger.warning("No images to create collage")
         return None
+
+    thumb_width, thumb_height = images[0].size
     rows = (len(images) + cols - 1) // cols
-    thumb_height = int(thumb_width * 4 / 3)
+
     collage_width = cols * thumb_width + (cols + 1) * margin
     collage_height = rows * thumb_height + (rows + 1) * margin
     collage_img = Image.new('RGB', (collage_width, collage_height), (0, 0, 0))
+
     for idx, img in enumerate(images):
-        img_thumb = img.copy()
-        img_thumb.thumbnail((thumb_width, thumb_height))
         x = margin + (idx % cols) * (thumb_width + margin)
         y = margin + (idx // cols) * (thumb_height + margin)
-        collage_img.paste(img_thumb, (x, y))
+        collage_img.paste(img, (x, y))
+
+    # Очистка памяти
+    del images
+    gc.collect()
+
     logger.info(f"Created collage image with size: {collage_img.size}")
     return collage_img
 
 def update_missing_descriptions_and_images():
     cursor.execute("""
-    SELECT id, name, district, price--, last_seen_dt, upload_dt, created_at_dt
+    SELECT id, name, district, price
     FROM listings 
     WHERE (description IS NULL OR description = '')
-      --AND upload_dt >= NOW() - INTERVAL '60 minutes'
       AND created_at_dt >= NOW() - INTERVAL '1 days'
       AND (
         district ILIKE '%Оболонський%' OR district ILIKE '%Оболонский%' OR
@@ -347,27 +354,16 @@ def update_missing_descriptions_and_images():
                         conn.commit()
                         break
 
-                    # Извлечение описания
-                    desc_container = soup.find('div', attrs={'data-testid': 'ad_description'})
-                    if desc_container:
-                        desc_div = desc_container.find('div', class_='css-19duwlz')
-                        if desc_div:
-                            for br in desc_div.find_all('br'):
-                                br.replace_with('\n')
-                            description_text = desc_div.get_text(strip=True)
-                        else:
-                            description_text = "Опис не знайдено (css-19duwlz відсутній)"
-                    else:
-                        description_text = "Опис не знайдено (data-testid='ad_description' відсутній)"
+                    description_text = parse_description(soup)
+                    img_urls = get_all_slider_images(soup)
+                    logger.info(f"Found {len(img_urls)} images for listing {listing_id}")
 
-                    # Извлечение изображений
-                    img_elements = soup.select('div.swiper-zoom-container img')
-                    img_urls = [img.get('src') for img in img_elements if img.get('src')]
-                    img_urls = list(dict.fromkeys(img_urls))  # удаляем дубликаты
-                    logger.info(f"Found {len(img_urls)} image URLs for listing {listing_id}")
-
-                    images = download_images(img_urls)
+                    images = download_images(img_urls, max_images=3)
                     collage_img = create_collage(images) if images else None
+
+                    del soup
+                    del images
+                    gc.collect()
 
                     first_img_url = img_urls[0] if img_urls else None
                     cursor.execute(
@@ -388,6 +384,8 @@ def update_missing_descriptions_and_images():
                         logger.error(f"Failed to update listing ID {listing_id} after 2 attempts")
         except Exception as e:
             logger.error(f"General error processing ID {listing_id}: {e}")
+
+        gc.collect()
 
           
 
