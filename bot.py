@@ -197,7 +197,7 @@ if __name__ == "__main__":
     try:
         while True:
             logger.info("Starting scraping process")
-            get_links(25)
+            get_links(3)
             update_missing_descriptions_and_images()
             #logger.info("Finished scraping cycle. Sleeping for 3 minutes.")
             #time.sleep(180)
