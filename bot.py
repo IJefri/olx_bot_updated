@@ -93,19 +93,19 @@ def parse_ukr_date(date_str):
 
     # Сьогодні / Сегодня
     if date_str.startswith("Сьогодні") or date_str.startswith("Сегодня"):
-    logging.info("Рядок починається з 'Сьогодні' або 'Сегодня'")
-    time_match = re.search(r'(\d{1,2}:\d{2})', date_str)
-    if time_match:
-        time_part = time_match.group(1)
-        logging.info(f"Знайдений час: {time_part}")
-    else:
-        time_part = "00:00"
-        logging.info("Час не знайдений, використовую за замовчуванням: 00:00")
-
-    dt_local = datetime.strptime(f"{datetime.now().strftime('%Y-%m-%d')} {time_part}", "%Y-%m-%d %H:%M")
-    dt_utc = dt_local.astimezone(timezone.utc)
-    logging.info(f"Повертаю datetime у UTC: {dt_utc}")
-    return dt_utc
+        logging.info("Рядок починається з 'Сьогодні' або 'Сегодня'")
+        time_match = re.search(r'(\d{1,2}:\d{2})', date_str)
+        if time_match:
+            time_part = time_match.group(1)
+            logging.info(f"Знайдений час: {time_part}")
+        else:
+            time_part = "00:00"
+            logging.info("Час не знайдений, використовую за замовчуванням: 00:00")
+    
+        dt_local = datetime.strptime(f"{datetime.now().strftime('%Y-%m-%d')} {time_part}", "%Y-%m-%d %H:%M")
+        dt_utc = dt_local.astimezone(timezone.utc)
+        logging.info(f"Повертаю datetime у UTC: {dt_utc}")
+        return dt_utc
 
     # Формат "30 липня 2024"
     parts = date_str.split()
