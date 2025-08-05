@@ -294,7 +294,7 @@ def download_images(img_urls, timeout=10, max_images=7, thumb_size=(300, 400)):
     return images
 
 
-def create_collage(images, cols=3, margin=5):
+def create_collage(images, cols=1, margin=5):
     if not images:
         logger.warning("No images to create collage")
         return None
