@@ -294,7 +294,7 @@ def download_images(img_urls, timeout=10, max_images=7, thumb_size=(300, 400)):
     return images
 
 
-def create_collage(images, cols=1, margin=5):
+def create_collage(images, cols=3, margin=5):
     if not images:
         logger.warning("No images to create collage")
         return None
@@ -366,7 +366,7 @@ def update_missing_descriptions_and_images():
                     img_urls = get_all_slider_images(soup)
                     logger.info(f"Found {len(img_urls)} images for listing {listing_id}")
 
-                    images = download_images(img_urls, max_images=3)
+                    images = download_images(img_urls, max_images=6) #images count#images count#images count#images count#images count
                     collage_img = create_collage(images) if images else None
 
                     del soup
