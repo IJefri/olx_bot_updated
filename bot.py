@@ -247,7 +247,7 @@ def send_message(name, district, price, description, link, collage_img=None):
 
     message = (
         f"🏠 <b>{name_html}</b>\n"
-        f"📍 <b>Район</b>: {loc_html} {hashtag}\n\n"
+        f"📍 <b>Район</b>: {hashtag}\n\n"
         f"💰 <b>Ціна</b>: {price_html}\n"
         f"📝 <b>Опис</b>: {desc_html}\n"
         f"🔗 <a href=\"{link_html}\">Посилання</a>"
