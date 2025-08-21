@@ -234,17 +234,18 @@ def send_message(name, district, price, description, link, collage_img=None):
     #     f"🔗 **Посилання**: {link}"
     # )
     
-    # формируем хэштег по району
-    district_clean = district.replace(" ", "_").replace(",", "")
-    hashtag = f"#{district_clean}"
+    district_clean = district.replace(" ", "_").replace(",", "").replace("-", "_")
+    hashtag = "#" + district_clean
     
     message = (
-        f"🏠 **{name}**\n"
-        f"📍 **Район**: {district} {hashtag}\n\n"
-        f"💰 **Ціна**: {price}\n"
-        f"📝 **Опис**: {description[:500]}\n"
-        f"🔗 **Посилання**: {link}"
+        f"🏠 <b>{name}</b>\n"
+        f"📍 <b>Район</b>: {district} {hashtag}\n\n"
+        f"💰 <b>Ціна</b>: {price}\n"
+        f"📝 <b>Опис</b>: {description[:500]}\n"
+        f"🔗 <a href='{link}'>Посилання</a>"
     )
+    
+   
 
     try:
         if collage_img:
@@ -258,7 +259,8 @@ def send_message(name, district, price, description, link, collage_img=None):
         else:
             logger.info(f"Sending message without photo for listing '{name}'")
             #bot.send_message(CHAT_ID, message, parse_mode='Markdown')
-            bot.send_message("@olx_bot_housing", message, parse_mode='Markdown')
+            #bot.send_message("@olx_bot_housing", message, parse_mode='Markdown')
+            bot.send_message("@olx_bot_housing", message, parse_mode="HTML")
         logger.info(f"Sent Telegram message for: {name}")
     except Exception as e:
         logger.error(f"Error sending Telegram message: {e}")
