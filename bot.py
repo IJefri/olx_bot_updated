@@ -244,7 +244,8 @@ def send_message(name, district, price, description, link, collage_img=None):
             bio.close()
         else:
             logger.info(f"Sending message without photo for listing '{name}'")
-            bot.send_message(CHAT_ID, message, parse_mode='Markdown')
+            #bot.send_message(CHAT_ID, message, parse_mode='Markdown')
+            bot.send_message("@olx_bot_housing", message, parse_mode='Markdown')
         logger.info(f"Sent Telegram message for: {name}")
     except Exception as e:
         logger.error(f"Error sending Telegram message: {e}")
