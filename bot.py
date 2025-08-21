@@ -11,11 +11,13 @@ from io import BytesIO
 import psutil
 import gc
 import requests
+import telebot
 
+from html import escape as hesc
 from bs4 import BeautifulSoup
 from PIL import Image
 
-import telebot
+
 
 # Логування
 logging.basicConfig(
@@ -226,26 +228,30 @@ def get_links(pages):
 
 
 def send_message(name, district, price, description, link, collage_img=None):
-    # message = (
-    #     f"🏠 **{name}**\n"
-    #     f"📍 **Район**: {district}\n\n"
-    #     f"💰 **Ціна**: {price}\n"
-    #     f"📝 **Опис**: {description[:500]}\n"
-    #     f"🔗 **Посилання**: {link}"
-    # )
-    
-    district_clean = district.replace(" ", "_").replace(",", "").replace("-", "_")
-    hashtag = "#" + district_clean
-    
+    DEST_CHAT = "@olx_bot_housing"  # канал или супергруппа
+
+    # Берём только часть до " - ", чтобы не включать дату/время
+    loc_text = district.split(" - ", 1)[0].strip()
+
+    # Формируем хэштег, заменяя недопустимые символы на "_"
+    tag = re.sub(r"[^\wА-Яа-яІіЇїЄєҐґ0-9]+", "_", loc_text, flags=re.UNICODE)
+    tag = re.sub(r"_+", "_", tag).strip("_")
+    hashtag = f"#{tag}" if tag else ""
+
+    # Экранируем данные для HTML
+    name_html = hesc(name)
+    loc_html = hesc(loc_text)
+    price_html = hesc(price)
+    desc_html = hesc((description or "")[:500])
+    link_html = hesc(link)
+
     message = (
-        f"🏠 <b>{name}</b>\n"
-        f"📍 <b>Район</b>: {district} {hashtag}\n\n"
-        f"💰 <b>Ціна</b>: {price}\n"
-        f"📝 <b>Опис</b>: {description[:500]}\n"
-        f"🔗 <a href='{link}'>Посилання</a>"
+        f"🏠 <b>{name_html}</b>\n"
+        f"📍 <b>Район</b>: {loc_html} {hashtag}\n\n"
+        f"💰 <b>Ціна</b>: {price_html}\n"
+        f"📝 <b>Опис</b>: {desc_html}\n"
+        f"🔗 <a href=\"{link_html}\">Посилання</a>"
     )
-    
-   
 
     try:
         if collage_img:
@@ -254,13 +260,11 @@ def send_message(name, district, price, description, link, collage_img=None):
             bio.name = 'collage.jpg'
             collage_img.save(bio, 'JPEG')
             bio.seek(0)
-            bot.send_photo(CHAT_ID, photo=bio, caption=message, parse_mode='Markdown')
+            bot.send_photo(DEST_CHAT, photo=bio, caption=message, parse_mode='HTML')
             bio.close()
         else:
             logger.info(f"Sending message without photo for listing '{name}'")
-            #bot.send_message(CHAT_ID, message, parse_mode='Markdown')
-            #bot.send_message("@olx_bot_housing", message, parse_mode='Markdown')
-            bot.send_message("@olx_bot_housing", message, parse_mode="HTML")
+            bot.send_message(DEST_CHAT, message, parse_mode='HTML', disable_web_page_preview=False)
         logger.info(f"Sent Telegram message for: {name}")
     except Exception as e:
         logger.error(f"Error sending Telegram message: {e}")
