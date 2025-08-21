@@ -226,13 +226,26 @@ def get_links(pages):
 
 
 def send_message(name, district, price, description, link, collage_img=None):
+    # message = (
+    #     f"🏠 **{name}**\n"
+    #     f"📍 **Район**: {district}\n\n"
+    #     f"💰 **Ціна**: {price}\n"
+    #     f"📝 **Опис**: {description[:500]}\n"
+    #     f"🔗 **Посилання**: {link}"
+    # )
+    
+    # формируем хэштег по району
+    district_clean = district.replace(" ", "_").replace(",", "")
+    hashtag = f"#{district_clean}"
+    
     message = (
         f"🏠 **{name}**\n"
-        f"📍 **Район**: {district}\n\n"
+        f"📍 **Район**: {district} {hashtag}\n\n"
         f"💰 **Ціна**: {price}\n"
         f"📝 **Опис**: {description[:500]}\n"
         f"🔗 **Посилання**: {link}"
     )
+
     try:
         if collage_img:
             logger.info(f"Sending photo with collage for listing '{name}'")
