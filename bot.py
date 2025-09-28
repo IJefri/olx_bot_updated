@@ -200,7 +200,7 @@ def get_links(pages):
             "currency": "UAH",
             "search[order]": "created_at:desc",
             "search[filter_float_price:from]": "12000",
-            "search[filter_float_price:to]": "20000",
+            "search[filter_float_price:to]": "25000",
             "search[filter_float_total_area:from]": "30",
             "page": page_num
         }
