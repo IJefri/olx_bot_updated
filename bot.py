@@ -352,7 +352,18 @@ def update_missing_descriptions_and_images():
         district ILIKE '%Солом''янський%' OR district ILIKE '%Соломенский%' OR
         district ILIKE '%Голосіївський%' OR district ILIKE '%Голосеевский%'
       )
-    ORDER BY upload_dt
+      AND lower(name) NOT LIKE '%ракетна%'
+      AND lower(name) NOT LIKE '%світлопарк%'
+      AND lower(name) NOT LIKE '%svitlopark%'
+      AND lower(name) NOT LIKE '%навігатор%'
+      AND lower(name) NOT LIKE '%навигатор%'
+      AND lower(name) NOT LIKE '%паркове місто%'
+      AND lower(name) NOT LIKE '%медовий%'
+      AND lower(name) NOT LIKE '%новомост%'
+      AND lower(name) NOT LIKE '%варшавс%'
+      AND lower(name) NOT LIKE '%англія%'
+      AND lower(name) NOT LIKE '%англия%'
+    ORDER BY upload_dt;
     """)
     rows = cursor.fetchall()
     logger.info(f"Found {len(rows)} listings missing description/images")
