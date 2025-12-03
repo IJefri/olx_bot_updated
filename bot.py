@@ -370,8 +370,6 @@ def update_missing_descriptions_and_images():
       AND lower(name) NOT LIKE '%нау%'
       AND lower(name) NOT LIKE '%швидкісни%'
       AND lower(name) NOT LIKE '%виноградар%'
-      AND lower(description) NOT LIKE '%виноградар%'
-      AND lower(description) NOT LIKE '%oakland%'
     ORDER BY upload_dt;
     """)
     rows = cursor.fetchall()
