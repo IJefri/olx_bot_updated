@@ -42,4 +42,4 @@ RUN pip install --no-cache-dir -r requirements.txt
 ENV CHROME_BIN=/usr/bin/chromium
 ENV CHROME_DRIVER=/usr/bin/chromedriver
 
-CMD ["python", "bot.py"]
+CMD ["python", "bot/run.py"]
