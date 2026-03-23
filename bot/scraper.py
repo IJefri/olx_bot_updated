@@ -225,31 +225,31 @@ try:
         WHERE (description IS NULL OR description = '')
           AND created_at_dt >= NOW() - INTERVAL '1 days'
           AND (
-            # district ILIKE '%Оболонський%' OR district ILIKE '%Оболонский%' OR
+            --district ILIKE '%Оболонський%' OR district ILIKE '%Оболонский%' OR
             district ILIKE '%Подільський%' OR district ILIKE '%Подольский%' OR
             district ILIKE '%Шевченківський%' OR district ILIKE '%Шевченковский%' OR
             district ILIKE '%Печерський%' OR district ILIKE '%Печерский%' OR
             district ILIKE '%Солом''янський%' OR district ILIKE '%Соломенский%' OR
             district ILIKE '%Голосіївський%' OR district ILIKE '%Голосеевский%'
           )
-          #AND lower(name) NOT LIKE '%ракетна%'
-          #AND lower(name) NOT LIKE '%світлопарк%'
-          #AND lower(name) NOT LIKE '%svitlopark%'
-          #AND lower(name) NOT LIKE '%навігатор%'
-          #AND lower(name) NOT LIKE '%навигатор%'
-          #AND lower(name) NOT LIKE '%паркове місто%'
-          #AND lower(name) NOT LIKE '%медовий%'
-          #AND lower(name) NOT LIKE '%новомост%'
-          #AND lower(name) NOT LIKE '%варшавс%'
-          #AND lower(name) NOT LIKE '%англія%'
-          #AND lower(name) NOT LIKE '%англия%'
-          #AND lower(name) NOT LIKE '%караває%'
-          #AND lower(name) NOT LIKE '%каравае%'
-          #AND lower(name) NOT LIKE '%британс%'
-          #AND lower(name) NOT LIKE '%orange%'
-          #AND lower(name) NOT LIKE '%нау%'
-          #AND lower(name) NOT LIKE '%швидкісни%'
-          #AND lower(name) NOT LIKE '%виноградар%'
+          --AND lower(name) NOT LIKE '%ракетна%'
+          --AND lower(name) NOT LIKE '%світлопарк%'
+          --AND lower(name) NOT LIKE '%svitlopark%'
+          --AND lower(name) NOT LIKE '%навігатор%'
+          --AND lower(name) NOT LIKE '%навигатор%'
+          --AND lower(name) NOT LIKE '%паркове місто%'
+          --AND lower(name) NOT LIKE '%медовий%'
+          --AND lower(name) NOT LIKE '%новомост%'
+          --AND lower(name) NOT LIKE '%варшавс%'
+          --AND lower(name) NOT LIKE '%англія%'
+          --AND lower(name) NOT LIKE '%англия%'
+          --AND lower(name) NOT LIKE '%караває%'
+          --AND lower(name) NOT LIKE '%каравае%'
+          --AND lower(name) NOT LIKE '%британс%'
+          --AND lower(name) NOT LIKE '%orange%'
+          --AND lower(name) NOT LIKE '%нау%'
+          --AND lower(name) NOT LIKE '%швидкісни%'
+          --AND lower(name) NOT LIKE '%виноградар%'
         ORDER BY upload_dt;
         """)
         rows = cursor.fetchall()
