@@ -119,7 +119,7 @@ try:
                 "currency": "UAH",
                 "search[order]": "created_at:desc",
                 "search[filter_float_price:from]": "5000", # 12
-                "search[filter_float_price:to]": "13000", # 25
+                "search[filter_float_price:to]": "14000", # 25
                 "search[filter_float_total_area:from]": "30",
                 "page": page_num
             }
@@ -225,8 +225,8 @@ try:
         WHERE (description IS NULL OR description = '')
           AND created_at_dt >= NOW() - INTERVAL '1 days'
           AND (
-            --district ILIKE '%Оболонський%' OR district ILIKE '%Оболонский%' OR
-            district ILIKE '%Подільський%' OR district ILIKE '%Подольский%' OR
+            district ILIKE '%Оболонський%' OR district ILIKE '%Оболонский%' OR
+            --district ILIKE '%Подільський%' OR district ILIKE '%Подольский%' OR
             district ILIKE '%Шевченківський%' OR district ILIKE '%Шевченковский%' OR
             district ILIKE '%Печерський%' OR district ILIKE '%Печерский%' OR
             district ILIKE '%Солом''янський%' OR district ILIKE '%Соломенский%' OR
