@@ -119,8 +119,8 @@ try:
                 "currency": "UAH",
                 "search[order]": "created_at:desc",
                 "search[filter_float_price:from]": "5000", # 12
-                "search[filter_float_price:to]": "14000", # 25
-                "search[filter_float_total_area:from]": "30",
+                "search[filter_float_price:to]": "15000", # 25
+                "search[filter_float_total_area:from]": "28",
                 "page": page_num
             }
             url = build_url(PARAMS)
