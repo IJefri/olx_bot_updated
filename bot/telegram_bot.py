@@ -21,13 +21,50 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-from bot.config import BOT_TOKEN, CHAT_ID  # импорт токена и ID чата из конфигурации
+from bot.config import BOT_TOKEN, CHAT_ID, CHAT_ID_15_20K, CHAT_ID_20_25K  # импорт токена и ID чата из конфигурации
 
 bot = telebot.TeleBot(BOT_TOKEN)  # создаём объект бота с токеном
 
+
+def parse_price(price_str):
+    """
+    Достаёт цену из строки вида:
+    '15 000 грн.Договірна'
+    '9 000 грн.'
+    '9000грн'
+    """
+
+    if not price_str:
+        return None
+
+    # ищем первое число с пробелами или без
+    match = re.search(r"(\d[\d\s]*)", price_str)
+
+    if not match:
+        return None
+
+    # убираем пробелы внутри числа
+    number = match.group(1).replace(" ", "")
+
+    return int(number)
+
+
 def send_message(name, district, price, description, link, collage_img=None):
     # определяем куда отправлять: либо CHAT_ID, либо публичный канал по умолчанию
-    DEST_CHAT = CHAT_ID
+    price_value = parse_price(price)
+
+    if price_value is not None:
+        if price_value < 15000:
+            DEST_CHAT = CHAT_ID
+        elif 15000 <= price_value <= 20000:
+            DEST_CHAT = CHAT_ID_15_20K
+        elif 20000 < price_value <= 25000:
+            DEST_CHAT = CHAT_ID_20_25K
+        else:
+            DEST_CHAT = CHAT_ID  # можно позже сделать отдельный чат 25k+
+    else:
+        DEST_CHAT = CHAT_ID
+        logger.info(f"Price not parsed for listing '{name}': {price}")
 
     # берём первую часть района (до " - ") и обрезаем пробелы
     loc_text = district.split(" - ", 1)[0].strip()
@@ -40,7 +77,7 @@ def send_message(name, district, price, description, link, collage_img=None):
 
     # экранируем HTML для безопасной вставки в сообщение
     name_html = hesc(name)
-    loc_html = hesc(loc_text)
+    # loc_html = hesc(loc_text)
     price_html = hesc(price)
     desc_html = hesc((description or "")[:500])  # обрезаем описание до 500 символов
     link_html = hesc(link)
